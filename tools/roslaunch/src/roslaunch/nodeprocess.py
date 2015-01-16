@@ -38,7 +38,7 @@ Local process implementation for running and monitoring nodes.
 
 import os
 import signal
-import subprocess 
+import subprocess
 import time
 import traceback
 
@@ -80,7 +80,7 @@ def create_master_process(run_id, type_, ros_root, port, num_workers=NUM_WORKERS
     @param timeout: socket timeout for connections.
     @type  timeout: float
     @raise RLException: if type_ or port is invalid
-    """    
+    """
     if port < 1 or port > 65535:
         raise RLException("invalid port assignment: %s"%port)
 
@@ -88,8 +88,8 @@ def create_master_process(run_id, type_, ros_root, port, num_workers=NUM_WORKERS
     # catkin/fuerte: no longer use ROS_ROOT-relative executables, search path instead
     master = type_
     # zenmaster is deprecated and aliased to rosmaster
-    if type_ in [Master.ROSMASTER, Master.ZENMASTER]:        
-        package = 'rosmaster'        
+    if type_ in [Master.ROSMASTER, Master.ZENMASTER]:
+        package = 'rosmaster'
         args = [master, '--core', '-p', str(port), '-w', str(num_workers)]
         if timeout is not None:
             args += ['-t', str(timeout)]
@@ -98,14 +98,15 @@ def create_master_process(run_id, type_, ros_root, port, num_workers=NUM_WORKERS
 
     _logger.info("process[master]: launching with args [%s]"%args)
     log_output = False
-    return LocalProcess(run_id, package, 'master', args, os.environ, log_output, None, required=True)
+    screen_output = True
+    return LocalProcess(run_id, package, 'master', args, os.environ, log_output, screen_output, required=True)
 
 def create_node_process(run_id, node, master_uri):
     """
     Factory for generating processes for launching local ROS
     nodes. Also registers the process with the L{ProcessMonitor} so that
     events can be generated when the process dies.
-    
+
     @param run_id: run_id of launch
     @type  run_id: str
     @param node: node to launch. Node name must be assigned.
@@ -115,7 +116,7 @@ def create_node_process(run_id, node, master_uri):
     @return: local process instance
     @rtype: L{LocalProcess}
     @raise NodeParamsException: If the node's parameters are improperly specific
-    """    
+    """
     _logger.info("create_node_process: package[%s] type[%s] machine[%s] master_uri[%s]", node.package, node.type, node.machine, master_uri)
     # check input args
     machine = node.machine
@@ -129,7 +130,7 @@ def create_node_process(run_id, node, master_uri):
 
     if not node.name:
         raise ValueError("node name must be assigned")
-    
+
     # we have to include the counter to prevent potential name
     # collisions between the two branches
     if os.environ.get('ROS_STATIC_LOG_FILE_NAMES', 0) == '1':
@@ -142,17 +143,24 @@ def create_node_process(run_id, node, master_uri):
     _logger.info('process[%s]: env[%s]', name, env)
 
     args = create_local_process_args(node, machine)
-    
-    _logger.info('process[%s]: args[%s]', name, args)        
+
+    _logger.info('process[%s]: args[%s]', name, args)
 
     # default for node.output not set is 'log'
-    log_output = node.output != 'screen'
+    if node.output == 'screen':
+        log_output = False
+        screen_output = True
+    elif node.output == 'both':
+        log_output = True
+        screen_output = True
+    else:
+        log_output = True
+        screen_output = False
     _logger.debug('process[%s]: returning LocalProcess wrapper')
-    return LocalProcess(run_id, node.package, name, args, env, log_output, \
+    return LocalProcess(run_id, node.package, name, args, env, log_output, screen_output,\
             respawn=node.respawn, respawn_delay=node.respawn_delay, \
             required=node.required, cwd=node.cwd, max_logfile_size=node.max_logfile_size,\
             logfile_count=node.logfile_count)
-
 
 def stream_reader(stream, level, logger, popen):
     while popen.poll() is None:
@@ -161,22 +169,13 @@ def stream_reader(stream, level, logger, popen):
             logger.info('%s', line.strip())
         elif level == logging.ERROR:
             logger.error('%s', line.strip())
-    #logger.handlers[0].flush()
-    #logger.handlers[0].close()
-    # it may be some data into th stream at the end of the process :
-    #line = stream.read()
-    #if level == logging.INFO:
-    #    logger.info('%s', line.strip())
-    #elif level == logging.ERROR:
-    #     logger.error('%s', line.strip())
-
 
 class LocalProcess(Process):
     """
     Process launched on local machine
     """
-    
-    def __init__(self, run_id, package, name, args, env, log_output,
+
+    def __init__(self, run_id, package, name, args, env, log_output, screen_output,
             respawn=False, respawn_delay=0.0, required=False, cwd=None,
             is_node=True, max_logfile_size=None, logfile_count=None):
         """
@@ -194,6 +193,8 @@ class LocalProcess(Process):
         @type  env: {str : str}
         @param log_output: if True, log output streams of process
         @type  log_output: bool
+        @param screen_output: if True, show process output on screen
+        @type  screen_output: bool
         @param respawn: respawn process if it dies (default is False)
         @type  respawn: bool
         @param respawn_delay: respawn process after a delay
@@ -206,12 +207,13 @@ class LocalProcess(Process):
         this value must >= 0``int``
         @param logfile_count: (optional) If max_logfile_size > 0, and logfile_count > 0, the system will save old log
         files by appending the extensions .1, .2 etc... This is an optional parameter, default value is 2.
-        """    
+        """
         super(LocalProcess, self).__init__(package, name, args, env,
                 respawn, respawn_delay, required)
         self.run_id = run_id
         self.popen = None
         self.log_output = log_output
+        self.screen_output = screen_output
         self.started = False
         self.stopped = False
         self.cwd = cwd
@@ -227,7 +229,7 @@ class LocalProcess(Process):
     def get_info(self):
         """
         Get all data about this process in dictionary form
-        """    
+        """
         info = super(LocalProcess, self).get_info()
         info['pid'] = self.pid
         if self.run_id:
@@ -243,7 +245,7 @@ class LocalProcess(Process):
         @return: stdout log file name, stderr log file
         name. Values are None if stdout/stderr are not logged.
         @rtype: str, str
-        """    
+        """
         log_dir = rospkg.get_log_dir(env=os.environ)
         static_log = os.environ.get('ROS_STATIC_LOG_FILE_NAMES', 0) == '1'
         if self.run_id and not static_log:
@@ -263,29 +265,29 @@ class LocalProcess(Process):
         # open in append mode
         # note: logfileerr: disabling in favor of stderr appearing in the console.
         # will likely reinstate once roserr/rosout is more properly used.
-        logger = None
-        logfname = self._log_name()
-        
+
+        # we create a logger (and we will add to it either a StreamHandler or a FileHandler
+        logger = logging.getLogger(self.package+'.'+self.name)
+        #if we must write on file :
         if self.log_output:
+            logfname = self._log_name()
             outf, errf = [os.path.join(log_dir, '%s-%s.log'%(logfname, n)) for n in ['stdout', 'stderr']]
             if self.respawn or static_log:
                 mode = 'a'
             else:
                 mode = 'w'
-            # we create a logger, and we add to it :
-            logger = logging.getLogger(self.package+'.'+self.name)
             # we don't propagate logs into the hierarchy. If we do it, when the node will be killed, some unwanted
             # stdout will be displayed on the console...
             logger.propagate = False
             if self.max_logfile_size:
-                # a rotating file handler if max_logfile_size was set by user in XML launch file.
+                # We create a rotating file handler if max_logfile_size was set by user in XML launch file.
                 hdlr_out = logging.handlers.RotatingFileHandler(outf, mode=mode, maxBytes=self.max_logfile_size,
                                                                 backupCount=self.logfile_count)
                 if is_child_mode():
                     hdlr_err = logging.handlers.RotatingFileHandler(errf, mode=mode, maxBytes=self.max_logfile_size,
                                                                     backupCount=self.logfile_count)
             else:
-                # a simple file to have the same behaviour as before :
+                # We create a simple file to have the same behaviour as before if there is no maxBytes attributes :
                 hdlr_out = logging.FileHandler(outf, mode=mode)
                 if is_child_mode():
                     hdlr_err = logging.FileHandler(errf, mode=mode)
@@ -295,20 +297,30 @@ class LocalProcess(Process):
             if is_child_mode():
                 hdlr_err.setLevel(logging.ERROR)
                 logger.addHandler(hdlr_err)
+            # #986: pass in logfile name to node
+            node_log_file = log_dir
+            if self.is_node:
+                # #1595: on respawn, these keep appending
+                self.args = _cleanup_remappings(self.args, '__log:=')
+                self.args.append("__log:=%s"%os.path.join(log_dir, "%s.log"%(logfname)))
 
-        # #986: pass in logfile name to node
-        node_log_file = log_dir
-        if self.is_node:
-            # #1595: on respawn, these keep appending
-            self.args = _cleanup_remappings(self.args, '__log:=')
-            self.args.append("__log:=%s"%os.path.join(log_dir, "%s.log"%(logfname)))
+        # if We must log to screen
+        if self.screen_output:
+            # we create handlers for stdout and stderr, and we add them to the logger.
+            hdlr_stdout = logging.StreamHandler(sys.stdout)
+            hdlr_stdout.setLevel(logging.INFO)
+            logger.addHandler(hdlr_stdout)
+            if is_child_mode():
+                hdlr_stderr = logging.StreamHandler(sys.stderr)
+                hdlr_stderr.setLevel(logging.ERROR)
+                logger.addHandler(hdlr_err)
 
         return logger
 
     def start(self):
         """
         Start the process.
-        
+
         @raise FatalProcessLaunch: if process cannot be started and it
         is not likely to ever succeed
         """
@@ -326,7 +338,7 @@ class LocalProcess(Process):
             # _configure_logging() can mutate self.args
             process_logger = None
             try:
-                process_logger = self._configure_logging()
+                process_logger = self._configure_logging() # Must always return an object even if we log only on screen.
             except Exception as e:
                 _logger.error(traceback.format_exc())
                 printerrlog("[%s] ERROR: unable to configure logging [%s]"%(self.name, str(e)))
@@ -340,7 +352,8 @@ class LocalProcess(Process):
                 # stdout and stderr must of subprocess must be redirected to a pipe
                 logfileout, logfileerr = subprocess.PIPE, subprocess.PIPE
             else:
-                # stdout and stderr must of subprocess must be displayed on the screen.
+                # stdout and stderr must of subprocess must be displayed on the screen because a problem occur when
+                # configuring the logger
                 logfileout, logfileerr = None, None
 
             if self.cwd == 'node':
@@ -362,6 +375,10 @@ class LocalProcess(Process):
             _logger.info("process[%s]: cwd will be [%s]", self.name, cwd)
 
             try:
+                if sys.platform.startswith('linux'):
+                    # the two arguments 'stdbuf' and '-oL' are necessary to have real time logging,
+                    # instead of all at once. only necessary if stdout is not a tty
+                    self.args = ['stdbuf', '-oL'] + self.args
                 self.popen = subprocess.Popen(self.args, cwd=cwd, stdout=logfileout, stderr=logfileerr, env=full_env, close_fds=True, preexec_fn=os.setsid)
             except OSError as e:
                 self.started = True # must set so is_alive state is correct
@@ -406,7 +423,7 @@ executable permission. This is often caused by a bad launch-prefix."""%(e.strerr
 
     def _log_name(self):
         return self.name.replace('/', '-')
-    
+
     def is_alive(self):
         """
         @return: True if process is still running
@@ -427,7 +444,7 @@ executable permission. This is often caused by a bad launch-prefix."""%(e.strerr
 
     def get_exit_description(self):
         """
-        @return: human-readable description of exit state 
+        @return: human-readable description of exit state
         @rtype: str
         """
         if self.exit_code is None:
@@ -436,7 +453,7 @@ executable permission. This is often caused by a bad launch-prefix."""%(e.strerr
             output = 'process has died [pid %s, exit code %s, cmd %s].'%(self.pid, self.exit_code, ' '.join(self.args))
         else:
             output = 'process has finished cleanly'
-                
+
         if self.log_dir:
             # #973: include location of output location in message
             output += '\nlog file: %s*.log'%(os.path.join(self.log_dir, self._log_name()))
@@ -449,10 +466,10 @@ executable permission. This is often caused by a bad launch-prefix."""%(e.strerr
         @param errors: error messages. stop() will record messages into this list.
         @type  errors: [str]
         """
-        self.exit_code = self.popen.poll() 
+        self.exit_code = self.popen.poll()
         if self.exit_code is not None:
             _logger.debug("process[%s].stop(): process has already returned %s", self.name, self.exit_code)
-            #print "process[%s].stop(): process has already returned %s"%(self.name, self.exit_code)                
+            #print "process[%s].stop(): process has already returned %s"%(self.name, self.exit_code)
             self.popen = None
             self.stopped = True
             return
@@ -463,11 +480,11 @@ executable permission. This is often caused by a bad launch-prefix."""%(e.strerr
 
         try:
             # Start with SIGINT and escalate from there.
-            _logger.info("[%s] sending SIGINT to pgid [%s]", self.name, pgid)                                    
+            _logger.info("[%s] sending SIGINT to pgid [%s]", self.name, pgid)
             os.killpg(pgid, signal.SIGINT)
             _logger.info("[%s] sent SIGINT to pgid [%s]", self.name, pgid)
             timeout_t = time.time() + _TIMEOUT_SIGINT
-            retcode = self.popen.poll()                
+            retcode = self.popen.poll()
             while time.time() < timeout_t and retcode is None:
                 time.sleep(0.1)
                 retcode = self.popen.poll()
@@ -475,7 +492,7 @@ executable permission. This is often caused by a bad launch-prefix."""%(e.strerr
             if retcode is None:
                 printerrlog("[%s] escalating to SIGTERM"%self.name)
                 timeout_t = time.time() + _TIMEOUT_SIGTERM
-                os.killpg(pgid, signal.SIGTERM)                
+                os.killpg(pgid, signal.SIGTERM)
                 _logger.info("[%s] sent SIGTERM to pgid [%s]"%(self.name, pgid))
                 retcode = self.popen.poll()
                 while time.time() < timeout_t and retcode is None:
@@ -502,7 +519,7 @@ executable permission. This is often caused by a bad launch-prefix."""%(e.strerr
                     _logger.info("process[%s]: SIGTERM killed with return value %s", self.name, retcode)
             else:
                 _logger.info("process[%s]: SIGINT killed with return value %s", self.name, retcode)
-                
+
         finally:
             if self.logThreadError:
                 _logger.info("process[%s]: Joining log Error thread")
@@ -517,11 +534,11 @@ executable permission. This is often caused by a bad launch-prefix."""%(e.strerr
         Win32 implementation of process killing. In part, refer to
 
           http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/347462
-        
+
         Note that it doesn't work as completely as _stop_unix as it can't utilise
         group id's. This means that any program which forks children underneath it
         won't get caught by this kill mechanism.
-        
+
         @param errors: error messages. stop() will record messages into this list.
         @type  errors: [str]
         """
@@ -582,31 +599,31 @@ executable permission. This is often caused by a bad launch-prefix."""%(e.strerr
             if self.logThreadInfo:
                 self.logThreadInfo.join()
             self.popen = None
-			
+
     def stop(self, errors=None):
         """
         Stop the process. Record any significant error messages in the errors parameter
-        
+
         @param errors: error messages. stop() will record messages into this list.
         @type  errors: [str]
         """
         if errors is None:
             errors = []
         super(LocalProcess, self).stop(errors)
-        self.lock.acquire()        
+        self.lock.acquire()
         try:
             try:
                 _logger.debug("process[%s].stop() starting", self.name)
                 if self.popen is None:
-                    _logger.debug("process[%s].stop(): popen is None, nothing to kill") 
+                    _logger.debug("process[%s].stop(): popen is None, nothing to kill")
                     return
                 if sys.platform in ['win32']: # cygwin seems to be ok
                     self._stop_win32(errors)
                 else:
                     self._stop_unix(errors)
             except:
-                #traceback.print_exc() 
-                _logger.error("[%s] EXCEPTION %s", self.name, traceback.format_exc())                                
+                #traceback.print_exc()
+                _logger.error("[%s] EXCEPTION %s", self.name, traceback.format_exc())
         finally:
             self.stopped = True
             self.lock.release()
@@ -618,7 +635,7 @@ def _cleanup_remappings(args, prefix):
     Remove all instances of args that start with prefix. This is used
     to remove args that were previously added (and are now being
     regenerated due to respawning)
-    """    
+    """
     existing_args = [a for a in args if a.startswith(prefix)]
     for a in existing_args:
         args.remove(a)
