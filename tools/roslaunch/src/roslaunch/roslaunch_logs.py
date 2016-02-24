@@ -74,4 +74,7 @@ def logs_main():
         print(log_dir)
         sys.exit(2)
 
-    print(os.path.join(log_dir, run_id))
+    if os.environ.get('ROS_STATIC_LOG_FILE_NAMES', 0) == '1':
+        print(log_dir)
+    else:
+        print(os.path.join(log_dir, run_id))
