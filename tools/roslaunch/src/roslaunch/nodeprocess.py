@@ -206,7 +206,8 @@ class LocalProcess(Process):
         @rtype: str, str
         """    
         log_dir = rospkg.get_log_dir(env=os.environ)
-        if self.run_id:
+        static_log = os.environ.get('ROS_STATIC_LOG_FILE_NAMES', 0) == '1'
+        if self.run_id and not static_log:
             log_dir = os.path.join(log_dir, self.run_id)
         if not os.path.exists(log_dir):
             try:
@@ -228,7 +229,7 @@ class LocalProcess(Process):
         
         if self.log_output:
             outf, errf = [os.path.join(log_dir, '%s-%s.log'%(logfname, n)) for n in ['stdout', 'stderr']]
-            if self.respawn:
+            if self.respawn or static_log:
                 mode = 'a'
             else:
                 mode = 'w'
