@@ -78,7 +78,10 @@ def configure_logging(uuid):
     try:
         import socket
         import rosgraph.roslogging
-        logfile_basename = os.path.join(uuid, '%s-%s-%s.log'%(NAME, socket.gethostname(), os.getpid()))
+        if os.environ.get('ROS_STATIC_LOG_FILE_NAMES', 0) == '1':
+            logfile_basename = os.path.join('%s.log'%(NAME))
+        else:
+            logfile_basename = os.path.join(uuid, '%s-%s-%s.log'%(NAME, socket.gethostname(), os.getpid()))
         # additional: names of python packages we depend on that may also be logging
         logfile_name = rosgraph.roslogging.configure_logging(NAME, filename=logfile_basename)
         if logfile_name:
