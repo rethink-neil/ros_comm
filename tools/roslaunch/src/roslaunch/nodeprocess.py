@@ -134,8 +134,10 @@ def create_node_process(run_id, node, master_uri):
     
     # we have to include the counter to prevent potential name
     # collisions between the two branches
-
-    name = "%s-%s"%(rosgraph.names.ns_join(node.namespace, node.name), _next_counter())
+    if os.environ.get('ROS_STATIC_LOG_FILE_NAMES', 0) == '1':
+        name = "%s"%(rosgraph.names.ns_join(node.namespace, node.name))
+    else:
+        name = "%s-%s"%(rosgraph.names.ns_join(node.namespace, node.name), _next_counter())
     if name[0] == '/':
         name = name[1:]
 
