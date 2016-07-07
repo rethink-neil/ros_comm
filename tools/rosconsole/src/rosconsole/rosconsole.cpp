@@ -193,6 +193,24 @@ struct MessageToken : public Token
   }
 };
 
+std::string toFormattedTimeString(time_t seconds, long int nanosecs, int  fractionalSecondPrecision)
+{
+  // 'YYYY-MM-DDThh:mm:ss.fffffffff+zzzz'
+
+  char buf[40];
+  memset(buf, 0, sizeof(buf));
+  struct tm ts_tm = { 0 };
+  localtime_r(&seconds, &ts_tm);
+  int pos = strftime(buf, sizeof(buf), "%FT%T", &ts_tm);
+  if(fractionalSecondPrecision)
+  {
+    pos += snprintf(buf + pos, sizeof(buf)-pos, ".%09ld", nanosecs) -
+      std::max(9 - fractionalSecondPrecision, 1);
+  }
+  strftime(buf + pos, sizeof(buf)-pos, "%z", &ts_tm);
+  return buf;
+}
+
 struct TimeToken : public Token
 {
   virtual std::string getString(void*, ::ros::console::Level, const char*, const char*, const char*, int)
@@ -205,6 +223,30 @@ struct TimeToken : public Token
     else
     {
       ss << ros::WallTime::now();
+    }
+    return ss.str();
+  }
+};
+
+struct ISODateToken : public Token
+{
+  virtual std::string getString(void*, ::ros::console::Level, const char*, const char*, const char*, int)
+  {
+    std::stringstream ss;
+    ros::WallTime walltimeVal;
+    walltimeVal = ros::WallTime::now();
+
+    if (ros::Time::isValid() && ros::Time::isSimTime())
+    {
+      ros::Time simtimeVal;
+      simtimeVal = ros::Time::now();
+
+      ss << toFormattedTimeString(walltimeVal.sec, walltimeVal.nsec,6) << ", "
+         << toFormattedTimeString(simtimeVal.sec, simtimeVal.nsec, 6);
+    }
+    else
+    {
+      ss << toFormattedTimeString(walltimeVal.sec, walltimeVal.nsec,6);
     }
     return ss.str();
   }
@@ -233,6 +275,23 @@ struct FileToken : public Token
   virtual std::string getString(void*, ::ros::console::Level, const char*, const char* file, const char*, int)
   {
     return file;
+  }
+};
+
+struct BaseFileNameToken : public Token
+{
+  // get just the base filename, not the whole path (too long)
+
+  virtual std::string getString(void*, ::ros::console::Level, const char*, const char* file, const char*, int)
+  {
+    //return file;
+    std::string filename(file);
+    const size_t last_slash_idx = filename.find_last_of("\\/");
+    if (std::string::npos != last_slash_idx)
+      {
+        filename.erase(0, last_slash_idx + 1);
+      }
+    return filename;
   }
 };
 
@@ -287,6 +346,14 @@ TokenPtr createTokenFromType(const std::string& type)
   else if (type == "function")
   {
     return TokenPtr(new FunctionToken());
+  }
+  else if (type == "isodate")
+  {
+    return TokenPtr(new ISODateToken());
+  }
+  else if (type == "basefilename")
+  {
+    return TokenPtr(new BaseFileNameToken());
   }
 
   return TokenPtr(new FixedMapToken(type));
